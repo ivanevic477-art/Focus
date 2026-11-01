@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Birch — Daily Focus</title>
+  <meta name="theme-color" content="#FBF8F1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <nav class="nav" id="nav">
+      <div class="brand"><span class="logo"></span><span class="brand-name">Birch</span></div>
+      <button data-a="nav" data-v="today"><span class="ico">☀</span><span>Today</span></button>
+      <button data-a="nav" data-v="projects"><span class="ico">❖</span><span>Projects</span></button>
+      <button data-a="nav" data-v="focus"><span class="ico">◔</span><span>Focus</span></button>
+      <button data-a="nav" data-v="calendar"><span class="ico">▦</span><span>Calendar</span></button>
+      <button data-a="nav" data-v="stats"><span class="ico">≋</span><span>Stats</span></button>
+      <div class="pill" id="pill" hidden></div>
+    </nav>
+    <main id="main"></main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
