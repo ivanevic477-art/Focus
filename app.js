@@ -10,7 +10,7 @@ const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); r
 const today = () => dkey(new Date());
 
 const DEFAULTS = {
-  tasks: [], sessions: [], blocks: [], projects: [], reviews: {}, intentions: {}, timer: null,
+  tasks: [], sessions: [], blocks: [], projects: [], journal: [], reviews: {}, intentions: {}, timer: null,
   settings: { focus: 25, brk: 5, longBrk: 15, every: 4 }
 };
 let S = load();
@@ -25,27 +25,28 @@ const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch
 let view = 'today';
 let tip = 0;
 const KINDS = {
-  todo: { label: 'To-do', icon: '✓', ph: 'What do you want to get done?' },
-  focus: { label: 'Focus', icon: '◔', ph: 'What will you focus on?' },
-  study: { label: 'Study', icon: '📖', ph: 'What are you studying?' },
-  meeting: { label: 'Meeting', icon: '👥', ph: 'Who or what is the meeting?' },
-  workout: { label: 'Workout', icon: '🏃', ph: 'What kind of workout?' },
-  free: { label: 'Free time', icon: '🌿', ph: 'What will you do with your free time?' }
+  todo: { label: 'To-do', ph: 'What do you want to get done?' },
+  focus: { label: 'Focus', ph: 'What will you focus on?' },
+  study: { label: 'Study', ph: 'What are you studying?' },
+  meeting: { label: 'Meeting', ph: 'Who or what is the meeting?' },
+  workout: { label: 'Workout', ph: 'What kind of workout?' },
+  free: { label: 'Free time', ph: 'What will you do with your free time?' }
 };
 const AUTO_KINDS = ['focus', 'study'];   // these start a focus timer by themselves
 const kindOf = x => KINDS[x.kind] || KINDS.focus;
+const kdot = x => `<span class="kdot k-${x.kind || 'focus'}"></span>`;
 let dayKind = 'todo';
 const fmtT = ms => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 const TIPS = [
-  { i: '🧘', t: 'Stretch', d: 'Roll your shoulders back slowly, ten times. Then reach both arms overhead and breathe out.' },
-  { i: '💧', t: 'Drink some water', d: 'Pour a glass and drink it slowly. Notice how it feels.' },
-  { i: '👀', t: 'Look away', d: 'Find something at least 20 feet away and rest your eyes on it for 20 seconds.' },
-  { i: '🌿', t: 'Breathe', d: 'Breathe in for 4, hold for 4, out for 6. Repeat five times.' },
-  { i: '🚶', t: 'Stand and move', d: 'Stand up, walk to a window or another room, and come back.' },
-  { i: '🤲', t: 'Rest your hands', d: 'Open and close your fists, then circle your wrists a few times.' },
-  { i: '🪟', t: 'Get some light', d: 'Step near a window and let your eyes adjust to daylight for a minute.' },
-  { i: '🙆', t: 'Neck release', d: 'Slowly tilt your ear toward each shoulder. Hold each side for a few breaths.' }
+  { t: 'Stretch', d: 'Roll your shoulders back slowly, ten times. Then reach both arms overhead and breathe out.' },
+  { t: 'Drink some water', d: 'Pour a glass and drink it slowly. Notice how it feels.' },
+  { t: 'Look away', d: 'Find something at least 20 feet away and rest your eyes on it for 20 seconds.' },
+  { t: 'Breathe', d: 'Breathe in for 4, hold for 4, out for 6. Repeat five times.' },
+  { t: 'Stand and move', d: 'Stand up, walk to a window or another room, and come back.' },
+  { t: 'Rest your hands', d: 'Open and close your fists, then circle your wrists a few times.' },
+  { t: 'Get some light', d: 'Step near a window and let your eyes adjust to daylight for a minute.' },
+  { t: 'Neck release', d: 'Slowly tilt your ear toward each shoulder. Hold each side for a few breaths.' }
 ];
 
 /* ---------- helpers ---------- */
@@ -139,7 +140,7 @@ function checkBlocks() {
     if (now >= end) { b.state = 'missed'; changed = true; continue; }
     if (!AUTO_KINDS.includes(b.kind || 'focus')) {
       b.state = 'ran'; changed = true;
-      notify(`${kindOf(b).label} starting`, b.title); toast(`${kindOf(b).icon} ${kindOf(b).label}: ${b.title}`);
+      notify(`${kindOf(b).label} starting`, b.title); toast(`${kindOf(b).label}: ${b.title}`);
       continue;
     }
     if (T()) { b.state = 'skipped'; changed = true; toast(`"${b.title}" was skipped — a timer was already running.`); continue; }
@@ -172,7 +173,7 @@ V.today = () => {
   const hr = new Date().getHours(), greet = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
   const yest = S.tasks.filter(t => t.date === dkey(addDays(new Date(), -1)) && !t.done);
   const rev = S.reviews[d] || {};
-  const moods = ['😞', '😕', '😐', '🙂', '😄'];
+  const moods = MOODS;
   return `
   <h1>${greet}</h1>
   <p class="sub">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
@@ -185,7 +186,7 @@ V.today = () => {
       return bs.map(b => {
         const end = b.start + b.mins * 60000, live = now >= b.start && now < end;
         return `<div class="task sched ${now >= end ? 'past' : ''} ${live ? 'live' : ''}">
-          <span class="kicon">${kindOf(b).icon}</span>
+          ${kdot(b)}
           <span class="t">${esc(b.title)} <span class="tag">${kindOf(b).label}</span></span>
           <span class="meta">${live ? 'Now · until ' + fmtT(end) : fmtT(b.start) + ' – ' + fmtT(end)}</span></div>`;
       }).join('');
@@ -208,7 +209,7 @@ V.today = () => {
         const sec = S.sessions.filter(s => s.taskId === t.id && s.date === d).reduce((a, s) => a + s.secs, 0);
         return `<div class="task ${t.done ? 'done' : ''}">
           <button class="check" data-a="toggle" data-id="${t.id}" aria-label="Toggle done">✓</button>
-          ${t.kind && t.kind !== 'todo' ? `<span class="kicon" title="${kindOf(t).label}">${kindOf(t).icon}</span>` : ''}
+          ${t.kind && t.kind !== 'todo' ? `${kdot(t)}` : ''}
           <span class="t">${esc(t.title)}${t.projectId && projById(t.projectId) ? ` <span class="tag">${esc(projById(t.projectId).title)}</span>` : ''}</span>
           ${sec ? `<span class="meta">${fmtDur(sec)}</span>` : ''}
           ${t.done || !['todo', 'focus', 'study', undefined].includes(t.kind) ? '' : `<button class="btn ghost sm" data-a="focus-task" data-id="${t.id}">Focus</button>`}
@@ -229,8 +230,8 @@ V.today = () => {
   </section>`;
 };
 
-const MOODS = ['😞', '😕', '😐', '🙂', '😄'];
-const MOOD_WORDS = ['Struggling', 'Slow', 'Steady', 'Good', 'Flowing'];
+const MOODS = ['Struggling', 'Slow', 'Steady', 'Good', 'Flowing'];
+const MOOD_WORDS = MOODS;
 const STATUS = { active: 'Active', paused: 'Paused', done: 'Done' };
 let projId = null, ciMood = 0;
 const projById = id => S.projects.find(p => p.id === id);
@@ -257,12 +258,12 @@ V.projects = () => {
     const age = last ? daysAgo(last.date) : null;
     const stale = p.status === 'active' && (age === null || age >= 7);
     return `<section class="card proj ${p.status}" data-a="open-proj" data-id="${p.id}" tabindex="0">
-      <div class="row" style="justify-content:space-between"><h2>${esc(p.title)}</h2><span><span class="tag">${STATUS[p.status]}</span> <button class="link" data-a="del-proj" data-id="${p.id}" aria-label="Delete project" title="Delete project">🗑</button></span></div>
+      <div class="row" style="justify-content:space-between"><h2>${esc(p.title)}</h2><span><span class="tag">${STATUS[p.status]}</span> <button class="link" data-a="del-proj" data-id="${p.id}" aria-label="Delete project" title="Delete project">Delete</button></span></div>
       ${p.why ? `<p class="hint" style="margin:2px 0 0">${esc(p.why)}</p>` : ''}
       <div class="row meta" style="margin-top:12px;gap:18px">
         <span>${fmtDur(projSecs(p.id, week))} this week</span>
         <span>${done}/${tasks.length} tasks</span>
-        ${last ? `<span>${MOODS[last.mood - 1] || ''} ${MOOD_WORDS[last.mood - 1] || 'Checked in'} · ${age === 0 ? 'today' : age + 'd ago'}</span>` : ''}
+        ${last ? `<span>${MOOD_WORDS[last.mood - 1] || 'Checked in'} · ${age === 0 ? 'today' : age + 'd ago'}</span>` : ''}
       </div>
       ${last?.next ? `<p style="margin:10px 0 0"><span class="meta">Next step:</span> ${esc(last.next)}</p>` : ''}
       ${stale ? `<p class="meta" style="margin:10px 0 0;color:var(--accent)">${age === null ? 'No check-ins yet' : 'Last check-in ' + age + ' days ago'} — worth a look.</p>` : ''}
@@ -309,10 +310,10 @@ function projectDetail(p) {
   <section class="card">
     <h2>Reflections</h2>
     ${p.checkins.length ? p.checkins.map(c => `<div class="entry">
-      <div class="meta">${new Date(c.date + 'T00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${MOODS[c.mood - 1] || ''} ${MOOD_WORDS[c.mood - 1] || ''}</div>
+      <div class="meta">${new Date(c.date + 'T00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${MOOD_WORDS[c.mood - 1] || ''}</div>
       ${c.went ? `<p><b>Moved:</b> ${esc(c.went)}</p>` : ''}${c.stuck ? `<p><b>In the way:</b> ${esc(c.stuck)}</p>` : ''}${c.next ? `<p><b>Next:</b> ${esc(c.next)}</p>` : ''}</div>`).join('') : '<div class="empty">Your check-ins will build a timeline here.</div>'}
   </section>
-  <button class="btn ghost sm" data-a="del-proj" data-id="${p.id}">🗑 Delete project</button>`;
+  <button class="btn ghost sm" data-a="del-proj" data-id="${p.id}">Delete project</button>`;
 }
 
 V.focus = () => {
@@ -321,7 +322,7 @@ V.focus = () => {
     const tp = TIPS[tip];
     return `<h1>Take a break</h1><p class="sub">${t.long ? 'A longer one — you earned it.' : 'Step away for a moment.'}</p>
     <section class="card breakcard">
-      <div class="big-ico">${tp.i}</div><h2>${tp.t}</h2><p>${tp.d}</p>
+      <div class="big-ico"></div><h2>${tp.t}</h2><p>${tp.d}</p>
       <div class="meta" style="margin-bottom:18px">Break ends in <b id="clock">${clockStr((t.endAt - Date.now()) / 1000)}</b></div>
       <div class="row" style="justify-content:center">
         <button class="btn ghost" data-a="tip">Another idea</button>
@@ -401,7 +402,7 @@ function dayModal(k) {
     <div class="row" style="justify-content:space-between"><h2>${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h2>
       <button class="link" data-a="close-day" aria-label="Close">✕</button></div>
     <div class="chips" id="kindChips" style="margin:14px 0 10px">
-      ${Object.entries(KINDS).map(([key, v]) => `<button type="button" class="chip ${dayKind === key ? 'on' : ''}" data-a="day-kind" data-k="${key}">${v.icon} ${v.label}</button>`).join('')}
+      ${Object.entries(KINDS).map(([key, v]) => `<button type="button" class="chip ${dayKind === key ? 'on' : ''}" data-a="day-kind" data-k="${key}">${v.label}</button>`).join('')}
     </div>
     <form class="row" data-form="dayadd" style="margin-bottom:6px">
       <input type="text" id="dayInput" name="title" class="grow" placeholder="${KINDS[dayKind].ph}" required maxlength="120" autocomplete="off">
@@ -412,18 +413,98 @@ function dayModal(k) {
       <button class="btn">Add</button>
     </form>
     <p class="meta" style="margin:0 0 10px">${'Add a start time to put it on your schedule. Focus and Study sessions start automatically.'}</p>
-    ${it.blocks.map(b => `<div class="task"><span class="kicon">${kindOf(b).icon}</span><span class="t">${esc(b.title)}
+    ${it.blocks.map(b => `<div class="task">${kdot(b)}<span class="t">${esc(b.title)}
         <span class="meta">${fmtT(b.start)} · ${b.mins}m · ${kindOf(b).label}</span></span>
         <button class="link" data-a="ics" data-id="${b.id}">.ics</button>
         <a class="link" target="_blank" rel="noopener" href="${gcalUrl(b)}">Google</a>
         <button class="link" data-a="del-block" data-id="${b.id}" aria-label="Remove">✕</button></div>`).join('')}
     ${it.tasks.map(t => `<div class="task ${t.done ? 'done' : ''}">
         <button class="check" data-a="toggle" data-id="${t.id}" aria-label="Toggle done">✓</button>
-        ${t.kind && t.kind !== 'todo' ? `<span class="kicon">${kindOf(t).icon}</span>` : ''}<span class="t">${esc(t.title)}</span>
+        ${t.kind && t.kind !== 'todo' ? `${kdot(t)}` : ''}<span class="t">${esc(t.title)}</span>
         <button class="link" data-a="del-task" data-id="${t.id}" aria-label="Delete">✕</button></div>`).join('')}
     ${it.tasks.length + it.blocks.length ? '' : '<div class="empty">Nothing planned yet.</div>'}
   </div></div>`;
 }
+
+const PROMPTS = [
+  'What is on your mind right now?',
+  'What went well today, even something small?',
+  'What drained your energy today, and what gave you some back?',
+  'What are you avoiding, and what is one gentle step toward it?',
+  'What are you grateful for this week?',
+  'What would make tomorrow feel good?',
+  'What did you learn recently that you want to remember?',
+  'How are you really feeling, in a few honest sentences?',
+  'What is one thing you are proud of lately?',
+  'Write freely. No one is reading this but you.'
+];
+let jMood = 0, jEdit = null, jQuery = '', jPrompt = Math.floor(Date.now() / 864e5) % PROMPTS.length;
+
+function journalList() {
+  const q = jQuery.trim().toLowerCase();
+  const es = S.journal.filter(e => !q || e.text.toLowerCase().includes(q)).sort((a, b) => b.ts - a.ts);
+  if (!es.length) return `<div class="empty">${q ? 'No entries match your search.' : 'Your entries will appear here.'}</div>`;
+  let html = '', lastDay = '';
+  for (const e of es) {
+    if (e.date !== lastDay) {
+      lastDay = e.date;
+      html += `<h3 class="jday">${new Date(e.date + 'T00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</h3>`;
+    }
+    const time = new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    html += `<article class="card jentry">
+      <div class="row" style="justify-content:space-between"><span class="meta">${time}${e.mood ? ` · ${MOOD_WORDS[e.mood - 1]}` : ''}</span>
+        <span>${jEdit === e.id ? '' : `<button class="link" data-a="j-edit" data-id="${e.id}">Edit</button><button class="link" data-a="j-del" data-id="${e.id}">Delete</button>`}</span></div>
+      ${e.prompt ? `<p class="jprompt">${esc(e.prompt)}</p>` : ''}
+      ${jEdit === e.id
+        ? `<textarea id="jEditText" style="min-height:140px;margin-top:8px">${esc(e.text)}</textarea>
+           <div class="row" style="margin-top:10px"><button class="btn sm" data-a="j-save-edit" data-id="${e.id}">Save</button><button class="btn ghost sm" data-a="j-cancel">Cancel</button></div>`
+        : `<p class="jtext">${esc(e.text)}</p>`}
+    </article>`;
+  }
+  return html;
+}
+
+V.journal = () => `<h1>Journal</h1><p class="sub">A private place to think things through.</p>
+  <section class="card">
+    <div class="row" style="justify-content:space-between;align-items:flex-start">
+      <p class="jprompt" id="jPrompt" style="margin:0">${PROMPTS[jPrompt]}</p>
+      <button class="link" data-a="j-prompt">Another prompt</button>
+    </div>
+    <div class="moods" id="jMoods" role="group" aria-label="How are you feeling?">${MOODS.map((m, i) => `<button type="button" class="${jMood === i + 1 ? 'on' : ''}" data-a="j-mood" data-n="${i + 1}" title="${MOOD_WORDS[i]}" aria-label="${MOOD_WORDS[i]}">${m}</button>`).join('')}</div>
+    <textarea id="jNew" style="min-height:160px" placeholder="Start writing…"></textarea>
+    <div class="row" style="margin-top:12px"><button class="btn" data-a="j-save">Save entry</button><span class="meta">${S.journal.length} ${S.journal.length === 1 ? 'entry' : 'entries'} so far</span></div>
+  </section>
+  ${S.journal.length ? `<input type="text" id="jSearch" class="grow" style="width:100%;margin-bottom:6px" placeholder="Search your entries" value="${esc(jQuery)}">` : ''}
+  <div id="jList">${journalList()}</div>`;
+
+const JOURNAL_ACTIONS = {
+  'j-mood': b => {
+    jMood = jMood === +b.dataset.n ? 0 : +b.dataset.n;
+    document.querySelectorAll('#jMoods button').forEach(x => x.classList.toggle('on', +x.dataset.n === jMood));
+  },
+  'j-prompt': () => { jPrompt = (jPrompt + 1) % PROMPTS.length; $('#jPrompt').textContent = PROMPTS[jPrompt]; $('#jNew').focus(); },
+  'j-save': () => {
+    const text = $('#jNew').value.trim();
+    if (!text) return toast('Write a few words first.');
+    S.journal.push({ id: uid(), date: today(), ts: Date.now(), mood: jMood, prompt: PROMPTS[jPrompt], text });
+    jMood = 0; jPrompt = (jPrompt + 1) % PROMPTS.length; save(); render(); toast('Entry saved.');
+  },
+  'j-edit': b => { jEdit = b.dataset.id; render(); $('#jEditText')?.focus(); },
+  'j-cancel': () => { jEdit = null; render(); },
+  'j-save-edit': b => {
+    const text = $('#jEditText').value.trim();
+    if (!text) return toast('An entry can’t be empty — delete it instead.');
+    const e = S.journal.find(x => x.id === b.dataset.id); e.text = text; e.edited = Date.now();
+    jEdit = null; save(); render();
+  },
+  'j-del': b => {
+    if (!confirm('Delete this journal entry?')) return;
+    S.journal = S.journal.filter(x => x.id !== b.dataset.id); save(); render();
+  }
+};
+document.addEventListener('input', e => {
+  if (e.target.id === 'jSearch') { jQuery = e.target.value; $('#jList').innerHTML = journalList(); }
+});
 
 V.stats = () => {
   const d = today(), ws = weekStart();
@@ -478,6 +559,7 @@ setInterval(() => {
 
 /* ---------- events ---------- */
 const A = {
+  ...JOURNAL_ACTIONS,
   nav: b => { view = b.dataset.v; render(); },
   toggle: b => { const t = taskById(b.dataset.id); t.done = !t.done; save(); render(); },
   'del-task': b => { S.tasks = S.tasks.filter(t => t.id !== b.dataset.id); save(); render(); },
