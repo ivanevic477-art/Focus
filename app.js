@@ -11,7 +11,7 @@ const today = () => dkey(new Date());
 
 const DEFAULTS = {
   tasks: [], sessions: [], blocks: [], projects: [], journal: [], reviews: {}, intentions: {}, timer: null,
-  settings: { focus: 25, brk: 5, longBrk: 15, every: 4 }
+  settings: { focus: 25, brk: 5, longBrk: 15, every: 4, sound: true, theme: 'light' }
 };
 let S = load();
 function load() {
@@ -20,7 +20,61 @@ function load() {
     return { ...DEFAULTS, ...d, settings: { ...DEFAULTS.settings, ...(d.settings || {}) } };
   } catch { return structuredClone(DEFAULTS); }
 }
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
+const save = () => {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(S));
+  } catch {
+    toast('Warning: Storage is full or restricted. Changes could not be saved.');
+  }
+};
+
+/* Colour themes. 'light' is the original Birch palette; Twilight is the quick dark toggle. */
+const THEMES = [
+  { id: 'light', name: 'Birch', bg: '#FBF8F1', fg: '#7A6848' },
+  { id: 'charcoal', name: 'Charcoal', bg: '#1B1C1E', fg: '#B8BFCC' },
+  { id: 'shell', name: 'Shell', bg: '#FBF6F3', fg: '#9A6B5B' },
+  { id: 'stone', name: 'Stone', bg: '#F4F4F1', fg: '#5F6B5E' },
+  { id: 'flax', name: 'Flax', bg: '#FAF6EA', fg: '#8A6F1F' }
+];
+const themeId = () => (S.settings.theme === 'twilight' || THEMES.some(t => t.id === S.settings.theme)) ? S.settings.theme : 'light';
+const themeName = id => id === 'twilight' ? 'Twilight' : (THEMES.find(t => t.id === id) || THEMES[0]).name;
+const isDark = id => id === 'twilight' || id === 'charcoal';
+const swatch = t => `<span class="swatch" style="background:${t.bg};--sw:${t.fg}"></span>`;
+const closeThemeMenu = () => $('#themeMenu')?.remove();
+function openThemeMenu(anchor) {
+  closeThemeMenu();
+  const cur = themeId(), m = document.createElement('div');
+  m.id = 'themeMenu'; m.className = 'theme-menu'; m.setAttribute('role', 'menu');
+  m.innerHTML = `<div class="meta" style="padding:6px 10px 4px">Theme</div>` + THEMES.map(t =>
+    `<button role="menuitemradio" aria-checked="${cur === t.id}" class="${cur === t.id ? 'on' : ''}" data-a="set-theme" data-t="${t.id}">${swatch(t)}<span>${t.name}</span></button>`).join('');
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  m.style.left = r.left + 12 + 'px'; m.style.top = r.bottom + 4 + 'px';
+}
+
+function applyTheme() {
+  const id = themeId(), isTwilight = isDark(id);   // "isTwilight" = any dark theme (controls the toggle icon)
+  document.documentElement.setAttribute('data-theme', id);
+  const metaTheme = $('meta[name="theme-color"]');
+  if (metaTheme) metaTheme.content = id === 'twilight' ? '#161513' : THEMES.find(t => t.id === id).bg;
+  const btn = $('#themeBtn');
+  if (btn) {
+    btn.innerHTML = isTwilight
+      ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`
+      : `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
+    btn.title = isTwilight ? 'Switch to Daylight theme' : 'Switch to Twilight theme';
+  }
+}
+
+function updateSoundBtn() {
+  const btn = $('#soundBtn');
+  if (!btn) return;
+  const on = S.settings.sound !== false;
+  btn.innerHTML = on
+    ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`
+    : `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M1 1l22 22"/></svg>`;
+  btn.title = on ? 'Sound enabled (click to mute)' : 'Sound muted (click to enable)';
+}
 
 let view = 'today';
 let tip = 0;
@@ -55,16 +109,42 @@ function fmtDur(secs) {
   return h ? `${h}h ${m % 60}m` : `${m}m`;
 }
 const clockStr = s => { s = Math.max(0, Math.ceil(s)); return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`; };
-function toast(msg) {
-  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 3500);
+let audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx) {
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    if (AudioCtor) audioCtx = new AudioCtor();
+  }
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
+  }
+  return audioCtx;
+}
+
+let toastAction = null;
+function toast(msg, actionLabel = null, onAction = null) {
+  const t = $('#toast');
+  toastAction = onAction;
+  if (actionLabel && onAction) {
+    t.innerHTML = `<span>${esc(msg)}</span><button type="button" id="toastAct">${esc(actionLabel)}</button>`;
+  } else {
+    t.textContent = msg;
+  }
+  t.classList.add('show');
+  clearTimeout(toast.h);
+  toast.h = setTimeout(() => {
+    t.classList.remove('show');
+    toastAction = null;
+  }, 4500);
 }
 function notify(title, body) {
   try { if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body }); } catch {}
 }
 function chime() {
+  if (S.settings.sound === false) return;
   try {
-    const c = new (window.AudioContext || window.webkitAudioContext)();
+    const c = getAudioCtx();
+    if (!c) return;
     [523.25, 659.25].forEach((f, i) => {
       const o = c.createOscillator(), g = c.createGain();
       o.frequency.value = f; o.connect(g); g.connect(c.destination);
@@ -96,8 +176,29 @@ function streaks() {
 const T = () => S.timer;
 function startFocus({ taskId = null, secs, label = '', fromBlock = false }) {
   secs = secs || S.settings.focus * 60;
-  S.timer = { mode: 'focus', endAt: Date.now() + secs * 1000, total: secs, taskId, startedAt: Date.now(), label, fromBlock };
+  S.timer = { mode: 'focus', endAt: Date.now() + secs * 1000, total: secs, taskId, startedAt: Date.now(), label, fromBlock, paused: false };
   save(); render();
+}
+function pauseTimer() {
+  const t = T(); if (!t || t.paused) return;
+  t.paused = true;
+  t.remaining = Math.max(0, (t.endAt - Date.now()) / 1000);
+  save(); render();
+  toast('Timer paused.');
+}
+function resumeTimer() {
+  const t = T(); if (!t || !t.paused) return;
+  t.paused = false;
+  t.endAt = Date.now() + (t.remaining || 0) * 1000;
+  delete t.remaining;
+  save(); render();
+  toast('Timer resumed.');
+}
+function toggleTimerPause() {
+  const t = T();
+  if (!t) return;
+  if (t.paused) resumeTimer();
+  else pauseTimer();
 }
 function logSession(secs) {
   const t = T(); if (!t || secs < 60) return;
@@ -109,7 +210,7 @@ function startBreak() {
   const long = doneToday > 0 && doneToday % S.settings.every === 0;
   const secs = (long ? S.settings.longBrk : S.settings.brk) * 60;
   tip = Math.floor(Math.random() * TIPS.length);
-  S.timer = { mode: 'break', endAt: Date.now() + secs * 1000, total: secs, long };
+  S.timer = { mode: 'break', endAt: Date.now() + secs * 1000, total: secs, long, paused: false };
 }
 function finish() {
   const t = T();
@@ -125,7 +226,9 @@ function finish() {
 function stopTimer() {
   const t = T(); if (!t) return;
   if (t.mode === 'focus') {
-    const el = (Date.now() - t.startedAt) / 1000;
+    const el = t.paused
+      ? Math.max(0, t.total - (t.remaining || 0))
+      : Math.max(0, (Date.now() - t.startedAt) / 1000);
     if (el >= 60) { logSession(Math.min(el, t.total)); toast(`Logged ${fmtDur(el)} of focus.`); }
   }
   S.timer = null; save(); render();
@@ -171,7 +274,7 @@ const V = {};
 V.today = () => {
   const d = today(), tasks = todayTasks(), done = tasks.filter(t => t.done).length;
   const hr = new Date().getHours(), greet = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
-  const yest = S.tasks.filter(t => t.date === dkey(addDays(new Date(), -1)) && !t.done);
+  const overdue = S.tasks.filter(t => t.date < d && !t.done);
   const rev = S.reviews[d] || {};
   const moods = MOODS;
   return `
@@ -203,7 +306,7 @@ V.today = () => {
       ${activeProjects().length ? `<select name="project" aria-label="Project"><option value="">No project</option>${activeProjects().map(p => `<option value="${p.id}">${esc(p.title)}</option>`).join('')}</select>` : ''}
       <button class="btn">Add</button>
     </form>
-    ${yest.length ? `<p class="hint" style="margin-top:12px">${yest.length} unfinished from yesterday. <button class="link" data-a="carry">Bring them to today</button></p>` : ''}
+    ${overdue.length ? `<p class="hint" style="margin-top:12px">${overdue.length} unfinished from earlier. <button class="link" data-a="carry">Bring them to today</button></p>` : ''}
     <div style="margin-top:10px">
       ${tasks.length ? tasks.map(t => {
         const sec = S.sessions.filter(s => s.taskId === t.id && s.date === d).reduce((a, s) => a + s.secs, 0);
@@ -320,42 +423,77 @@ V.focus = () => {
   const t = T(), st = S.settings;
   if (t && t.mode === 'break') {
     const tp = TIPS[tip];
+    const isPaused = !!t.paused;
+    const left = isPaused ? t.remaining : (t.endAt - Date.now()) / 1000;
     return `<h1>Take a break</h1><p class="sub">${t.long ? 'A longer one — you earned it.' : 'Step away for a moment.'}</p>
     <section class="card breakcard">
-      <div class="big-ico"></div><h2>${tp.t}</h2><p>${tp.d}</p>
-      <div class="meta" style="margin-bottom:18px">Break ends in <b id="clock">${clockStr((t.endAt - Date.now()) / 1000)}</b></div>
-      <div class="row" style="justify-content:center">
+      <div class="breathe-box">
+        <div class="breathe-halo"></div>
+        <div class="breathe-circle">
+          <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/>
+            <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>
+          </svg>
+        </div>
+      </div>
+      <p class="breathe-cue">Breathe in gently... and release.</p>
+      <h2>${esc(tp.t)}</h2>
+      <p>${esc(tp.d)}</p>
+      <div class="meta" style="margin-bottom:18px">Break ends in <b id="clock">${clockStr(left)}</b>${isPaused ? ' · Paused' : ''}</div>
+      <div class="row" style="justify-content:center;gap:10px">
         <button class="btn ghost" data-a="tip">Another idea</button>
+        <button class="btn ghost" data-a="${isPaused ? 'resume' : 'pause'}">${isPaused ? 'Resume' : 'Pause'}</button>
         <button class="btn" data-a="skip-break">I'm ready to focus</button>
       </div>
     </section>`;
   }
   const open = todayTasks().filter(x => !x.done);
   const running = t && t.mode === 'focus';
+  const isPaused = running && !!t.paused;
   const R = 118, C = 2 * Math.PI * R;
-  const left = running ? (t.endAt - Date.now()) / 1000 : st.focus * 60;
+  const left = running ? (isPaused ? t.remaining : (t.endAt - Date.now()) / 1000) : st.focus * 60;
   const total = running ? t.total : st.focus * 60;
-  const cur = running ? taskById(t.taskId) : null;
+  const cur = running && t.taskId ? taskById(t.taskId) : null;
   return `<h1>Focus</h1><p class="sub">One thing at a time.</p>
   <section class="card timer">
-    <div class="ring">
+    <div class="ring ${isPaused ? 'paused' : ''}">
       <svg width="260" height="260" viewBox="0 0 260 260"><circle cx="130" cy="130" r="${R}" fill="none" stroke="var(--birch-100)" stroke-width="10"/>
         <circle id="arc" cx="130" cy="130" r="${R}" fill="none" stroke="var(--accent)" stroke-width="10" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${running ? C * (1 - left / total) : 0}"/></svg>
       <div class="clock" id="clock">${clockStr(left)}</div>
+      ${isPaused ? '<span class="lbl">Paused</span>' : ''}
     </div>
-    ${running ? `<p class="meta" style="margin:-8px 0 18px">${esc(cur ? cur.title : t.label || 'Open focus')}</p>
-      <button class="btn big" data-a="stop">${t.fromBlock ? 'End block' : 'Stop'}</button>` : `
+    ${running ? `
+      <div style="margin:-6px 0 20px">
+        ${cur ? `
+          <div class="row" style="justify-content:center;gap:8px">
+            <span class="meta" style="font-size:1rem;color:var(--ink)">${esc(cur.title)}</span>
+            ${cur.done
+              ? `<span class="badge-done">✓ Completed</span>`
+              : `<button class="btn ghost sm" data-a="done-active" data-id="${cur.id}">✓ Complete task</button>`}
+          </div>
+        ` : `<p class="meta" style="font-size:1rem;color:var(--ink)">${esc(t.label || 'Open focus')}</p>`}
+      </div>
+      <div class="row" style="justify-content:center;gap:12px">
+        <button class="btn big" data-a="${isPaused ? 'resume' : 'pause'}">${isPaused ? 'Resume' : 'Pause'}</button>
+        <button class="btn ghost big" data-a="stop">${t.fromBlock ? 'End block' : 'Stop'}</button>
+      </div>
+    ` : `
       <div class="row" style="justify-content:center;margin-bottom:18px">
         <select id="taskSel" aria-label="Task">
           <option value="">No specific task</option>
           ${open.map(x => `<option value="${x.id}" ${x.id === focusSel ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}
         </select>
       </div>
-      <div class="chips" style="justify-content:center;margin-bottom:20px">
+      <div class="chips" style="justify-content:center;align-items:center;margin-bottom:20px;gap:8px">
         ${[15, 25, 45, 60].map(m => `<button class="chip ${st.focus === m ? 'on' : ''}" data-a="len" data-m="${m}">${m} min</button>`).join('')}
+        <span class="row" style="align-items:center;gap:4px">
+          <input type="number" id="customLen" min="1" max="180" style="width:64px;padding:6px 8px;text-align:center" placeholder="mins" value="${[15, 25, 45, 60].includes(st.focus) ? '' : st.focus}">
+          <button class="btn ghost sm" data-a="set-custom-len">Set</button>
+        </span>
       </div>
       <button class="btn big" data-a="start">Start focusing</button>
-      <p class="meta" style="margin-top:18px">Breaks: ${[5, 10].map(m => `<button class="link" style="${st.brk === m ? 'color:var(--ink);font-weight:600' : ''}" data-a="brk" data-m="${m}">${m} min</button>`).join('·')}</p>`}
+      <p class="meta" style="margin-top:18px">Breaks: ${[5, 10, 15].map(m => `<button class="link" style="${st.brk === m ? 'color:var(--ink);font-weight:600' : ''}" data-a="brk" data-m="${m}">${m} min</button>`).join('·')}</p>
+    `}
   </section>`;
 };
 let focusSel = '';
@@ -438,7 +576,7 @@ const PROMPTS = [
   'What is one thing you are proud of lately?',
   'Write freely. No one is reading this but you.'
 ];
-let jMood = 0, jEdit = null, jQuery = '', jPrompt = Math.floor(Date.now() / 864e5) % PROMPTS.length;
+let jMood = 0, jEdit = null, jQuery = '', jDraft = '', jPrompt = Math.floor(Date.now() / 864e5) % PROMPTS.length;
 
 function journalList() {
   const q = jQuery.trim().toLowerCase();
@@ -471,23 +609,48 @@ V.journal = () => `<h1>Journal</h1><p class="sub">A private place to think thing
       <button class="link" data-a="j-prompt">Another prompt</button>
     </div>
     <div class="moods" id="jMoods" role="group" aria-label="How are you feeling?">${MOODS.map((m, i) => `<button type="button" class="${jMood === i + 1 ? 'on' : ''}" data-a="j-mood" data-n="${i + 1}" title="${MOOD_WORDS[i]}" aria-label="${MOOD_WORDS[i]}">${m}</button>`).join('')}</div>
-    <textarea id="jNew" style="min-height:160px" placeholder="Start writing…"></textarea>
-    <div class="row" style="margin-top:12px"><button class="btn" data-a="j-save">Save entry</button><span class="meta">${S.journal.length} ${S.journal.length === 1 ? 'entry' : 'entries'} so far</span></div>
+    <textarea id="jNew" style="min-height:160px" placeholder="Start writing…">${esc(jDraft)}</textarea>
+    <div class="row" style="justify-content:space-between;align-items:center;margin-top:12px">
+      <div class="row">
+        <button class="btn" data-a="j-save">Save entry</button>
+        <span class="meta">${S.journal.length} ${S.journal.length === 1 ? 'entry' : 'entries'} so far</span>
+      </div>
+      ${S.journal.length ? `<button class="link" data-a="export-journal">Export all (.md)</button>` : ''}
+    </div>
   </section>
   ${S.journal.length ? `<input type="text" id="jSearch" class="grow" style="width:100%;margin-bottom:6px" placeholder="Search your entries" value="${esc(jQuery)}">` : ''}
   <div id="jList">${journalList()}</div>`;
 
 const JOURNAL_ACTIONS = {
+  'export-journal': () => {
+    if (!S.journal.length) return toast('No journal entries to export.');
+    const lines = ['# Birch Journal Entries', '', `*Exported on ${new Date().toLocaleDateString(undefined, { dateStyle: 'full' })}*`, ''];
+    [...S.journal].sort((a, b) => b.ts - a.ts).forEach(e => {
+      const dt = new Date(e.ts).toLocaleString([], { dateStyle: 'full', timeStyle: 'short' });
+      lines.push(`## ${dt}${e.mood ? ` · ${MOOD_WORDS[e.mood - 1]}` : ''}`);
+      if (e.prompt) lines.push(`> ${e.prompt}`);
+      lines.push('');
+      lines.push(e.text);
+      lines.push('', '---', '');
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `birch-journal-${today()}.md`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast('Journal exported as Markdown.');
+  },
   'j-mood': b => {
     jMood = jMood === +b.dataset.n ? 0 : +b.dataset.n;
     document.querySelectorAll('#jMoods button').forEach(x => x.classList.toggle('on', +x.dataset.n === jMood));
   },
   'j-prompt': () => { jPrompt = (jPrompt + 1) % PROMPTS.length; $('#jPrompt').textContent = PROMPTS[jPrompt]; $('#jNew').focus(); },
   'j-save': () => {
-    const text = $('#jNew').value.trim();
+    const text = ($('#jNew')?.value ?? jDraft).trim();
     if (!text) return toast('Write a few words first.');
     S.journal.push({ id: uid(), date: today(), ts: Date.now(), mood: jMood, prompt: PROMPTS[jPrompt], text });
-    jMood = 0; jPrompt = (jPrompt + 1) % PROMPTS.length; save(); render(); toast('Entry saved.');
+    jDraft = ''; jMood = 0; jPrompt = (jPrompt + 1) % PROMPTS.length; save(); render(); toast('Entry saved.');
   },
   'j-edit': b => { jEdit = b.dataset.id; render(); $('#jEditText')?.focus(); },
   'j-cancel': () => { jEdit = null; render(); },
@@ -504,6 +667,14 @@ const JOURNAL_ACTIONS = {
 };
 document.addEventListener('input', e => {
   if (e.target.id === 'jSearch') { jQuery = e.target.value; $('#jList').innerHTML = journalList(); }
+  if (e.target.id === 'jNew') { jDraft = e.target.value; }
+  if (e.target.matches('[data-intent]')) { S.intentions[today()] = e.target.value; save(); }
+  if (e.target.matches('[data-review]')) {
+    const r = (S.reviews[today()] ||= {});
+    r.text = e.target.value;
+    r.saved = false;
+    save();
+  }
 });
 
 V.stats = () => {
@@ -530,11 +701,57 @@ V.stats = () => {
   </section>
   <section class="card"><h2>Where the time went</h2><p class="hint">This week, by task</p>
     ${rows.length ? rows.map(r => `<div style="margin-bottom:14px"><div class="row" style="justify-content:space-between"><span>${esc(r.title)}</span><span class="meta">${fmtDur(r.secs)}</span></div><div class="hbar"><i style="width:${r.secs / rmax * 100}%"></i></div></div>`).join('') : '<div class="empty">Complete a focus session and it will show up here.</div>'}
+  </section>
+  <section class="card">
+    <h2>Timer & Rhythm Preferences</h2>
+    <p class="hint">Tailor your focus and break intervals to your natural workflow.</p>
+    <div class="grid">
+      <div>
+        <label class="meta" for="setFocus">Focus duration</label>
+        <select id="setFocus" data-set="focus" style="width:100%;margin-top:6px">
+          ${[15, 20, 25, 30, 45, 50, 60, 90].map(m => `<option value="${m}" ${S.settings.focus === m ? 'selected' : ''}>${m} minutes</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="meta" for="setBrk">Short break</label>
+        <select id="setBrk" data-set="brk" style="width:100%;margin-top:6px">
+          ${[3, 5, 8, 10, 15].map(m => `<option value="${m}" ${S.settings.brk === m ? 'selected' : ''}>${m} minutes</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="meta" for="setLongBrk">Long break</label>
+        <select id="setLongBrk" data-set="longBrk" style="width:100%;margin-top:6px">
+          ${[10, 15, 20, 25, 30].map(m => `<option value="${m}" ${S.settings.longBrk === m ? 'selected' : ''}>${m} minutes</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="meta" for="setEvery">Long break every</label>
+        <select id="setEvery" data-set="every" style="width:100%;margin-top:6px">
+          ${[2, 3, 4, 5, 6].map(c => `<option value="${c}" ${S.settings.every === c ? 'selected' : ''}>${c} sessions</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:14px;gap:10px">
+      <button class="btn ghost sm" data-a="toggle-sound">${S.settings.sound !== false ? 'Sound: Enabled' : 'Sound: Muted'}</button>
+      <button class="btn ghost sm" data-a="toggle-theme">${isDark(themeId()) ? 'Switch to light' : 'Switch to Twilight'}</button>
+    </div>
+    <p class="meta" style="margin:16px 0 8px">Colour theme</p>
+    <div class="chips">${THEMES.map(t => `<button class="swchip ${themeId() === t.id ? 'on' : ''}" data-a="set-theme" data-t="${t.id}">${swatch(t)}${t.name}</button>`).join('')}</div>
+  </section>
+  <section class="card">
+    <h2>Data & Backup</h2>
+    <p class="hint">Birch keeps your data strictly in this browser. Export a JSON backup to keep your focus history, projects, and journal entries safe.</p>
+    <div class="row">
+      <button class="btn ghost sm" data-a="export-data">Export backup (.json)</button>
+      <label class="btn ghost sm" style="cursor:pointer">Import backup<input type="file" id="importFile" accept=".json" style="display:none"></label>
+    </div>
   </section>`;
 };
 
 /* ---------- render & live updates ---------- */
 function render() {
+  applyTheme();
+  updateSoundBtn();
   document.querySelectorAll('#nav [data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === view));
   const m = $('#main'); m.innerHTML = V[view]();
   updateLive();
@@ -543,39 +760,141 @@ function render() {
 function updateLive() {
   const t = T(), pill = $('#pill');
   if (t) {
-    const left = (t.endAt - Date.now()) / 1000;
+    const isPaused = !!t.paused;
+    const left = isPaused ? t.remaining : (t.endAt - Date.now()) / 1000;
     pill.hidden = false; pill.dataset.a = 'nav'; pill.dataset.v = 'focus';
-    pill.textContent = `${t.mode === 'focus' ? 'Focusing' : 'Break'} · ${clockStr(left)}`;
-    document.title = `${clockStr(left)} · Birch`;
+    pill.textContent = `${isPaused ? 'Paused' : (t.mode === 'focus' ? 'Focusing' : 'Break')} · ${clockStr(left)}`;
+    document.title = `${isPaused ? '⏸ ' : ''}${clockStr(left)} · Birch`;
     const c = $('#clock'); if (c) c.textContent = clockStr(left);
     const arc = $('#arc'); if (arc) arc.setAttribute('stroke-dashoffset', 2 * Math.PI * 118 * (1 - left / t.total));
+    const ring = $('.ring'); if (ring) ring.classList.toggle('paused', isPaused);
   } else { pill.hidden = true; document.title = 'Birch — Daily Focus'; }
 }
 setInterval(() => {
   checkBlocks();
   const t = T();
-  if (t && Date.now() >= t.endAt) finish(); else updateLive();
+  if (t) {
+    if (t.paused) updateLive();
+    else if (Date.now() >= t.endAt) finish();
+    else updateLive();
+  }
 }, 1000);
 
 /* ---------- events ---------- */
+let lastDeletedTask = null, lastDeletedTaskIndex = -1;
+let lastDeletedBlock = null, lastDeletedBlockIndex = -1;
+
 const A = {
   ...JOURNAL_ACTIONS,
   nav: b => { view = b.dataset.v; render(); },
   toggle: b => { const t = taskById(b.dataset.id); t.done = !t.done; save(); render(); },
-  'del-task': b => { S.tasks = S.tasks.filter(t => t.id !== b.dataset.id); save(); render(); },
-  carry: () => { S.tasks.filter(t => t.date === dkey(addDays(new Date(), -1)) && !t.done).forEach(t => t.date = today()); save(); render(); },
+  'del-task': b => {
+    const idx = S.tasks.findIndex(t => t.id === b.dataset.id);
+    if (idx === -1) return;
+    const t = S.tasks[idx];
+    lastDeletedTask = t;
+    lastDeletedTaskIndex = idx;
+    S.tasks.splice(idx, 1);
+    save(); render();
+    toast(`Deleted "${t.title}".`, 'Undo', () => {
+      if (lastDeletedTask) {
+        S.tasks.splice(Math.min(lastDeletedTaskIndex, S.tasks.length), 0, lastDeletedTask);
+        lastDeletedTask = null;
+        save(); render();
+        toast('Task restored.');
+      }
+    });
+  },
+  carry: () => {
+    const past = S.tasks.filter(t => t.date < today() && !t.done);
+    past.forEach(t => t.date = today());
+    save(); render();
+    toast(`${past.length} unfinished ${past.length === 1 ? 'task' : 'tasks'} brought to today.`);
+  },
   'focus-task': b => { focusSel = b.dataset.id; view = 'focus'; render(); },
-  mood: b => { (S.reviews[today()] ||= {}).mood = +b.dataset.n; S.reviews[today()].saved = false; save(); render(); },
+  mood: b => {
+    const r = (S.reviews[today()] ||= {});
+    const revInput = $('[data-review]');
+    if (revInput) r.text = revInput.value;
+    r.mood = +b.dataset.n;
+    r.saved = false;
+    save();
+    document.querySelectorAll('.moods [data-a="mood"]').forEach(btn => {
+      btn.classList.toggle('on', +btn.dataset.n === r.mood);
+    });
+  },
   'save-review': () => {
-    const r = (S.reviews[today()] ||= {}); r.text = $('[data-review]').value; r.saved = true; save(); render(); toast('Reflection saved. See you tomorrow.');
+    const r = (S.reviews[today()] ||= {});
+    const revInput = $('[data-review]');
+    if (revInput) r.text = revInput.value;
+    r.saved = true;
+    save(); render();
+    toast('Reflection saved. See you tomorrow.');
+  },
+  pause: pauseTimer,
+  resume: resumeTimer,
+  'done-active': b => {
+    const t = taskById(b.dataset.id);
+    if (t) {
+      t.done = true;
+      save(); render();
+      toast('Task completed! Keep flowing or stop anytime.');
+    }
+  },
+  'set-custom-len': () => {
+    const val = parseInt($('#customLen')?.value, 10);
+    if (val && val >= 1 && val <= 180) {
+      S.settings.focus = val;
+      save(); render();
+      toast(`Focus duration set to ${val} minutes.`);
+    } else {
+      toast('Please enter between 1 and 180 minutes.');
+    }
+  },
+  'toggle-sound': () => {
+    S.settings.sound = S.settings.sound === false;
+    save();
+    updateSoundBtn();
+    if (view === 'stats') render();
+    toast(S.settings.sound ? 'Chime sound enabled.' : 'Chime sound muted.');
+  },
+  'toggle-theme': () => {
+    S.settings.theme = isDark(themeId()) ? 'light' : 'twilight';
+    save();
+    applyTheme();
+    if (view === 'stats') render();
+    toast(`${themeName(themeId())} theme active.`);
+  },
+  'theme-menu': b => { $('#themeMenu') ? closeThemeMenu() : openThemeMenu(b); },
+  'set-theme': b => {
+    S.settings.theme = b.dataset.t;
+    save(); closeThemeMenu(); applyTheme();
+    if (view === 'stats') render();
+    toast(`${themeName(themeId())} theme active.`);
   },
   len: b => { S.settings.focus = +b.dataset.m; save(); render(); },
   brk: b => { S.settings.brk = +b.dataset.m; save(); render(); },
-  start: () => { startFocus({ taskId: $('#taskSel').value || null }); },
+  start: () => { startFocus({ taskId: $('#taskSel')?.value || null }); },
   stop: stopTimer,
   tip: () => { tip = (tip + 1 + Math.floor(Math.random() * (TIPS.length - 1))) % TIPS.length; render(); },
   'skip-break': () => { S.timer = null; save(); render(); },
-  'del-block': b => { S.blocks = S.blocks.filter(x => x.id !== b.dataset.id); save(); render(); },
+  'del-block': b => {
+    const idx = S.blocks.findIndex(x => x.id === b.dataset.id);
+    if (idx === -1) return;
+    const blk = S.blocks[idx];
+    lastDeletedBlock = blk;
+    lastDeletedBlockIndex = idx;
+    S.blocks.splice(idx, 1);
+    save(); render();
+    toast(`Removed "${blk.title}".`, 'Undo', () => {
+      if (lastDeletedBlock) {
+        S.blocks.splice(Math.min(lastDeletedBlockIndex, S.blocks.length), 0, lastDeletedBlock);
+        lastDeletedBlock = null;
+        save(); render();
+        toast('Block restored.');
+      }
+    });
+  },
   ics: b => { const x = S.blocks.find(y => y.id === b.dataset.id); downloadIcs([x], 'focus-block.ics'); },
   'ics-all': () => downloadIcs(S.blocks.filter(b => !b.state || b.state === 'ran'), 'focus-blocks.ics'),
   'open-proj': b => { projId = b.dataset.id; ciMood = 0; render(); window.scrollTo(0, 0); },
@@ -604,9 +923,26 @@ const A = {
   'cal-prev': () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1); render(); },
   'cal-next': () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1); render(); },
   'cal-today': () => { const n = new Date(); calMonth = new Date(n.getFullYear(), n.getMonth(), 1); render(); },
-  notif: async () => { try { await Notification.requestPermission(); } catch {} render(); }
+  notif: async () => { try { await Notification.requestPermission(); } catch {} render(); },
+  'export-data': () => {
+    const blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `birch-backup-${today()}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast('Backup downloaded.');
+  }
 };
 document.addEventListener('click', e => {
+  getAudioCtx();
+  if (e.target.id === 'toastAct' && toastAction) {
+    const fn = toastAction;
+    toastAction = null;
+    $('#toast').classList.remove('show');
+    fn();
+    return;
+  }
   const b = e.target.closest('[data-a]'); if (b && A[b.dataset.a]) A[b.dataset.a](b, e);
 });
 document.addEventListener('submit', e => {
@@ -630,23 +966,68 @@ document.addEventListener('submit', e => {
     const c = { id: uid(), date: today(), mood: ciMood, went: fd.went.trim(), stuck: fd.stuck.trim(), next: fd.next.trim() };
     if (!c.mood && !c.went && !c.stuck && !c.next) return toast('Add a mood or a few words first.');
     projById(projId).checkins.unshift(c); ciMood = 0; toast('Check-in saved.');
-  } else {
-    const start = new Date(`${fd.date}T${fd.time}`).getTime();
-    if (isNaN(start)) return;
-    const match = S.tasks.find(t => t.title === fd.title.trim() && !t.done);
-    S.blocks.push({ id: uid(), title: fd.title.trim(), taskId: match ? match.id : null, start, mins: +fd.mins, state: start + fd.mins * 60000 <= Date.now() ? 'missed' : null });
-    toast('Focus block added.');
   }
   save(); render();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && calSel) { calSel = null; render(); }
-  if (e.key === 'Enter' && e.target.matches('.proj[data-a]')) A[e.target.dataset.a](e.target);
+  if (e.key === 'Escape' && calSel) { calSel = null; render(); return; }
+  if (e.key === 'Enter') {
+    if (e.target.id === 'customLen') { A['set-custom-len'](); return; }
+    if (e.target.matches('.proj[data-a]')) { A[e.target.dataset.a](e.target); return; }
+  }
+  const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
+  if (isInput) return;
+
+  if (e.code === 'Space') {
+    e.preventDefault();
+    const t = T();
+    if (t) toggleTimerPause();
+    else if (view === 'focus') A.start();
+    else { view = 'focus'; render(); }
+    return;
+  }
+
+  const tabKeys = { '1': 'today', '2': 'projects', '3': 'focus', '4': 'calendar', '5': 'journal', '6': 'stats' };
+  if (tabKeys[e.key]) {
+    view = tabKeys[e.key];
+    render();
+  }
 });
 document.addEventListener('change', e => {
   if (e.target.matches('[data-intent]')) { S.intentions[today()] = e.target.value; save(); }
   if (e.target.id === 'taskSel') focusSel = e.target.value;
+  if (e.target.dataset.set) {
+    S.settings[e.target.dataset.set] = +e.target.value;
+    save();
+    toast('Timer preference updated.');
+  }
+  if (e.target.id === 'importFile' && e.target.files?.length) {
+    const file = e.target.files[0];
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const d = JSON.parse(ev.target.result);
+        if (!d || typeof d !== 'object') throw new Error('Invalid backup file');
+        if (!confirm('Import this backup? It will replace all current data.')) {
+          e.target.value = '';
+          return;
+        }
+        S = { ...DEFAULTS, ...d, settings: { ...DEFAULTS.settings, ...(d.settings || {}) } };
+        save();
+        render();
+        toast('Backup restored successfully.');
+      } catch {
+        toast('Failed to import backup: invalid file format.');
+      }
+      e.target.value = '';
+    };
+    reader.readAsText(file);
+  }
 });
 
 render();
 if (T() && Date.now() >= T().endAt) finish();
+
+/* close the theme menu on outside click / Escape */
+document.addEventListener('click', e => { if (!e.target.closest('#themeMenu, [data-a="theme-menu"]')) closeThemeMenu(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeThemeMenu(); });
